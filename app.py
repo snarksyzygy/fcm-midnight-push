@@ -14,6 +14,16 @@ firebase_admin.initialize_app(cred)
 def health_check():
     return "✅ App is running!"
 
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json(force=True)
+    token = data.get("token")
+    tz = data.get("tz")
+    if not token:
+        return {"registered": False, "error": "Missing token"}, 400
+    print(f"🔖 Registered device token: {token}, tz: {tz}")
+    return {"registered": True, "received": data}
+
 @app.route("/send-silent", methods=["POST"])
 def send_silent():
     data = request.get_json(force=True)
