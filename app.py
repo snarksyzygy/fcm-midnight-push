@@ -9,13 +9,24 @@ from google.cloud import firestore
 
 app = Flask(__name__)
 
- # Load service‐account JSON from env var
-json_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON", "")
-cred = credentials.Certificate(json.loads(json_creds))
+# ------------------------------------------------------------
+# Load service‑account key.
+# Expect a one‑line base‑64 string in SA_B64 (preferred) or
+# fallback to GOOGLE_APPLICATION_CREDENTIALS_JSON for older envs.
+# ------------------------------------------------------------
+import base64, tempfile
+
+b64_key = os.getenv("SA_B64") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+if not b64_key:
+    raise RuntimeError("Missing SA_B64 or GOOGLE_APPLICATION_CREDENTIALS_JSON env‑var")
+
+# Decode into a Python dict for firebase_admin
+cred_info = json.loads(base64.b64decode(b64_key))
+cred = credentials.Certificate(cred_info)
 firebase_admin.initialize_app(cred)
 
 # Initialize Firestore client
-db = firestore.Client()
+db = firestore.client()
 
 # Scheduler for per-device midnight pushes
 scheduler = BackgroundScheduler()
@@ -49,7 +60,6 @@ def fetch_and_store_today():
 
 
 # Add daily job to fetch and store today's events
-from apscheduler.triggers.cron import CronTrigger
 scheduler.add_job(fetch_and_store_today,
                   trigger=CronTrigger(hour=0, minute=5, timezone="UTC"),
                   id="daily_calendar_fetch",
