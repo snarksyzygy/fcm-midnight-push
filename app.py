@@ -5,6 +5,7 @@ import os, json
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import requests, datetime
+from dateutil import parser as dtparse     # ISO‑8601 parser
 from google.cloud import firestore
 
 app = Flask(__name__)
@@ -42,42 +43,50 @@ def fetch_and_store_today():
     """
     URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
-        resp = requests.get(URL, timeout=10)
-        resp.raise_for_status()
-        weekly = resp.json()
+        weekly = requests.get(URL, timeout=10).json()
 
-        today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-    # Write in chunks of ≤500 mutations (Firestore limit)
-        batch = db.batch()
-        count = 0
-        written_today = 0
+        today_date   = datetime.datetime.utcnow().date()      # e.g. 2025‑06‑14
+        today_str    = today_date.isoformat()
+
+        batch          = db.batch()
+        writes_in_batch = 0
+        written_total  = 0
 
         for ev in weekly:
-            if ev.get("date") != today:
+            # ---------- keep only today ----------
+            try:
+                ev_date = dtparse.isoparse(ev["date"]).date()
+            except Exception:
+                continue
+            if ev_date != today_date:
                 continue
 
-            key = f"{ev['date']}_{ev['time']}_{ev['currency']}_{ev['event'].replace(' ', '_')}"
+            # ---------- build a stable document id ----------
+            event_time = dtparse.isoparse(ev["date"]).strftime("%H:%M")
+            key = f"{today_str}_{event_time}_{ev['country']}_{ev['title'].replace(' ', '_')}"
+
+            # ---------- write to /eventCache/YYYY‑MM‑DD/items/{key} ----------
             doc_ref = (
-                db.collection("events")
-                  .document(today)
+                db.collection("eventCache")
+                  .document(today_str)
                   .collection("items")
                   .document(key)
             )
             batch.set(doc_ref, ev, merge=True)
-            count += 1
-            written_today += 1
+            writes_in_batch += 1
+            written_total   += 1
 
-            # Commit every 500 queued writes
-            if count == 500:
+            # Firestore limit: 500 writes per batch
+            if writes_in_batch == 500:
                 batch.commit()
-                batch = db.batch()
-                count = 0
+                batch             = db.batch()
+                writes_in_batch   = 0
 
         # commit any remainder
-        if count:
+        if writes_in_batch:
             batch.commit()
 
-        app.logger.info(f"✅ Stored {written_today} events for {today} to Firestore.")
+        app.logger.info(f"✅ Stored {written_total} events for {today_str} to Firestore.")
     except Exception as e:
         app.logger.error(f"❌ fetch_and_store_today failed: {e}")
 
