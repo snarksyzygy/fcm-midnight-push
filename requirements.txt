@@ -1,5 +1,0 @@
-Flask
-firebase-admin
-gunicorn
-apscheduler
-python-dateutil>=2.9.0

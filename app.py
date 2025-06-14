@@ -1,3 +1,4 @@
+import ijson
 from flask import Flask, request
 import firebase_admin
 from firebase_admin import credentials, messaging
@@ -45,14 +46,16 @@ def fetch_and_store_week():
     """
     URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
-        weekly = requests.get(URL, timeout=10).json()
-        app.logger.info(f"Downloaded {len(weekly)} events from ForexFactory")
+        resp = requests.get(URL, stream=True, timeout=10)
+        parser = ijson.items(resp.raw, 'item')
+        count_downloaded = 0
 
         batch          = db.batch()
         writes_in_batch = 0
         written_total  = 0
 
-        for ev in weekly:
+        for ev in parser:
+            count_downloaded += 1
             # ---------- keep all events ----------
             # Parse the ISO‑8601 timestamp but *keep the calendar day as published*
             # ForexFactory stamps each item with the local‑exchange date (usually ET).
@@ -95,6 +98,7 @@ def fetch_and_store_week():
             batch.commit()
             app.logger.info(f"Committed final batch with {writes_in_batch} writes")
 
+        app.logger.info(f"Downloaded {count_downloaded} events from ForexFactory")
         app.logger.info(f"✅ Upserted {written_total} events across the week.")
     except Exception as e:
         app.logger.error(f"❌ fetch_and_store_week failed: {e}")
