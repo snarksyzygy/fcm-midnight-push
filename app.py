@@ -58,8 +58,12 @@ def fetch_and_store_today():
 
         for ev in weekly:
             # ---------- keep only today ----------
+            # Parse the ISO‑8601 timestamp but *keep the calendar day as published*
+            # ForexFactory stamps each item with the local‑exchange date (usually ET).
+            # Converting to UTC can push late‑evening events into the following day,
+            # so we compare on the naïve calendar date only.
             try:
-                ev_date = dtparse.isoparse(ev["date"]).astimezone(datetime.timezone.utc).date()
+                ev_date = dtparse.isoparse(ev["date"]).date()   # YYYY‑MM‑DD
             except Exception:
                 continue
             if ev_date != today_date:
