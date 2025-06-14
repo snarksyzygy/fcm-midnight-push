@@ -43,9 +43,40 @@ db = firestore.Client(credentials=sa_creds, project=cred_info["project_id"])
 openai.api_key = os.getenv("OPENAI_API_KEY")
 DESC_DOC = db.document("descriptions/cache")
 
+def load_bundled_descriptions() -> dict[str, str]:
+    """
+    Read descriptions.json that lives next to app.py and return its dict.
+    Returns an empty dict if the file is missing or unreadable.
+    """
+    try:
+        bundle_path = os.path.join(os.path.dirname(__file__), "descriptions.json")
+        with open(bundle_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        app.logger.warning("descriptions.json not found – skipping bundled preload")
+        return {}
+    except Exception as exc:
+        app.logger.warning(f"Failed reading descriptions.json: {exc}")
+        return {}
+
 def load_description_cache() -> dict[str, str]:
+    """
+    Merge Firestore cache with bundled descriptions.json on first launch.
+    New keys from the bundled file are written back to Firestore so subsequent
+    containers / deploys start with the superset.
+    """
     snap = DESC_DOC.get()
-    return snap.to_dict().get("entries", {}) if snap.exists else {}
+    cache: dict[str, str] = snap.to_dict().get("entries", {}) if snap.exists else {}
+
+    bundled = load_bundled_descriptions()
+    missing = {k: v for k, v in bundled.items() if k not in cache}
+
+    if missing:
+        app.logger.info(f"🔰 Seeding {len(missing)} descriptions from bundled JSON")
+        DESC_DOC.set({"entries": missing}, merge=True)
+        cache.update(missing)
+
+    return cache
 
 def save_description_batch(batch: dict[str, str]) -> None:
     if batch:
