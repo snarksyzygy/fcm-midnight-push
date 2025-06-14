@@ -1,5 +1,6 @@
 import ijson
 import gzip
+import io
 from flask import Flask, request
 import firebase_admin
 from firebase_admin import credentials, messaging
@@ -50,11 +51,23 @@ def fetch_and_store_week():
         resp = requests.get(URL, stream=True, timeout=10)
         resp.raise_for_status()
 
-        # Some weeks the feed is plain JSON, other weeks it is sent as gzip.
-        if resp.headers.get("Content-Encoding", "").lower() == "gzip":
-            resp.raw.decode_content = True  # urllib3 handles the decompress
-            stream_obj = gzip.GzipFile(fileobj=resp.raw)
-        else:
+        # Some weeks FF sets Content‑Encoding: gzip, but occasionally it sends the
+        # header even when the body is plain JSON (and vice‑versa). Try gzip first;
+        # fall back to the raw stream on failure.
+        try:
+            if resp.headers.get("Content-Encoding", "").lower() == "gzip":
+                resp.raw.decode_content = True
+                stream_obj = gzip.GzipFile(fileobj=resp.raw)
+            else:
+                stream_obj = resp.raw
+            # Peek first byte to confirm gzip; read(1) then seek back
+            first_byte = stream_obj.peek(1) if hasattr(stream_obj, "peek") else stream_obj.read(1)
+            if first_byte.startswith(b"[{"):
+                # plain JSON; rewind if we consumed one byte
+                if hasattr(stream_obj, "seek"):
+                    stream_obj.seek(0)
+        except (OSError, AttributeError):
+            # Not actually gzipped
             stream_obj = resp.raw
 
         # Incremental JSON parser over the (maybe‑decompressed) stream
