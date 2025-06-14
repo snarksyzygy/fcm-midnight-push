@@ -46,6 +46,8 @@ def fetch_and_store_week():
     """
     Downloads the current‑week JSON and stores every event, grouped by calendar‑day, skipping anything already present.
     """
+    from collections import defaultdict
+    day_events: dict[str, list] = defaultdict(list)
     URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
         # Retrieve the feed; requests automatically decompresses gzip when
@@ -86,30 +88,16 @@ def fetch_and_store_week():
                 .replace("/", "_")
                 .replace("\\", "_")
             )
-            key = f"{date_str}_{event_time}_{ev['country']}_{safe_title}"
-            doc_ref    = (
-                db.collection("eventCache")
-                  .document(date_str)
-                  .collection("items")
-                  .document(key)
-            )
+            # Accumulate events per Firestore document (one doc per day)
+            day_events[date_str].append(ev)
 
-            batch.set(doc_ref, ev, merge=False)
-            writes_in_batch += 1
-            written_total   += 1
-
-            # Commit every MAX_WRITES writes
-            if writes_in_batch == MAX_WRITES:
-                batch.commit()
-                time.sleep(SLEEP_SEC)
-                batch             = db.batch()
-                writes_in_batch   = 0
-
-        # commit any remainder
-        if writes_in_batch:
-            batch.commit()
-            time.sleep(SLEEP_SEC)
-            app.logger.info(f"Committed final batch with {writes_in_batch} writes")
+        # Persist each day's events as a single document with an "events" array
+        batch = db.batch()
+        for date_key, ev_list in day_events.items():
+            doc_ref = db.collection("eventCache").document(date_key)
+            batch.set(doc_ref, {"events": ev_list}, merge=True)
+        batch.commit()
+        written_total = sum(len(v) for v in day_events.values())
 
         app.logger.info(f"Downloaded {count_downloaded} events from ForexFactory")
         app.logger.info(f"✅ Upserted {written_total} events across the week.")
