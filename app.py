@@ -3,6 +3,7 @@ import io
 from flask import Flask, request
 import firebase_admin
 from firebase_admin import credentials, messaging
+from firebase_admin.messaging import ApsAlert
 import os, json
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -183,7 +184,12 @@ def send_midnight_alert(token: str):
             token=token,
             apns=messaging.APNSConfig(
                 headers={"apns-priority": "10"},  # high priority alert
-                payload=messaging.APNSPayload(aps=messaging.Aps(alert={"title": "", "body": ""}))
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        alert=ApsAlert(title="New Day!", body="Fetching today’s news events…"),
+                        sound="default"
+                    )
+                )
             )
         )
         messaging.send(message)
