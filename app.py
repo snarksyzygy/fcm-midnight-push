@@ -39,25 +39,21 @@ scheduler = BackgroundScheduler()
 scheduler.start()
 
 # Run once daily at 00:05 UTC to cache the weekly feed and extract today's slice
-def fetch_and_store_today():
+def fetch_and_store_week():
     """
-    Downloads ForexFactory's weekly JSON feed, extracts only today's rows,
-    and stores them under /events/YYYY-MM-DD/{eventID} in Firestore.
+    Downloads the current‑week JSON and stores every event, grouped by calendar‑day, skipping anything already present.
     """
     URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
         weekly = requests.get(URL, timeout=10).json()
         app.logger.info(f"Downloaded {len(weekly)} events from ForexFactory")
 
-        today_date   = datetime.datetime.utcnow().date()      # e.g. 2025‑06‑14
-        today_str    = today_date.isoformat()
-
         batch          = db.batch()
         writes_in_batch = 0
         written_total  = 0
 
         for ev in weekly:
-            # ---------- keep only today ----------
+            # ---------- keep all events ----------
             # Parse the ISO‑8601 timestamp but *keep the calendar day as published*
             # ForexFactory stamps each item with the local‑exchange date (usually ET).
             # Converting to UTC can push late‑evening events into the following day,
@@ -66,21 +62,18 @@ def fetch_and_store_today():
                 ev_date = dtparse.isoparse(ev["date"]).date()   # YYYY‑MM‑DD
             except Exception:
                 continue
-            if ev_date != today_date:
-                continue
 
-            # ---------- build a stable document id ----------
+            date_str   = ev_date.isoformat()                # e.g. 2025‑06‑14
             event_time = dtparse.isoparse(ev["date"]).strftime("%H:%M")
-            key = f"{today_str}_{event_time}_{ev['country']}_{ev['title'].replace(' ', '_')}"
-
-            # ---------- write to /eventCache/YYYY‑MM‑DD/items/{key} ----------
-            doc_ref = (
+            key        = f"{date_str}_{event_time}_{ev['country']}_{ev['title'].replace(' ', '_')}"
+            doc_ref    = (
                 db.collection("eventCache")
-                  .document(today_str)
+                  .document(date_str)
                   .collection("items")
                   .document(key)
             )
-            batch.set(doc_ref, ev, merge=True)
+
+            batch.set(doc_ref, ev, merge=False)
             writes_in_batch += 1
             written_total   += 1
 
@@ -94,29 +87,26 @@ def fetch_and_store_today():
         if writes_in_batch:
             batch.commit()
             app.logger.info(f"Committed final batch with {writes_in_batch} writes")
-        if written_total == 0:
-            app.logger.warning("No events matched today's date filter ‑ check timezone logic.")
 
-        app.logger.info(f"✅ Stored {written_total} events for {today_str} to Firestore.")
+        app.logger.info(f"✅ Upserted {written_total} events across the week.")
     except Exception as e:
-        app.logger.error(f"❌ fetch_and_store_today failed: {e}")
+        app.logger.error(f"❌ fetch_and_store_week failed: {e}")
 
 
 # Add daily job to fetch and store today's events
-scheduler.add_job(fetch_and_store_today,
+scheduler.add_job(fetch_and_store_week,
                   trigger=CronTrigger(hour=0, minute=5, timezone="UTC"),
-                  id="daily_calendar_fetch",
+                  id="weekly_calendar_refresh",
                   replace_existing=True)
 
 @app.route("/health")
 def health_check():
     return "✅ App is running!"
 
-
-# Manual endpoint to trigger today's fetch
-@app.route("/fetch-today-now")
-def manual_fetch_today():
-    fetch_and_store_today()
+# Manual endpoint to trigger weekly fetch
+@app.route("/fetch-week-now")
+def manual_fetch_week():
+    fetch_and_store_week()
     return {"fetched": True}
 
 @app.route("/register", methods=["POST"])
@@ -186,3 +176,14 @@ def send_midnight_alert(token: str):
         app.logger.info(f"🔔 Midnight alert sent to {token}")
     except Exception as e:
         app.logger.error(f"❌ Failed to send midnight alert to {token}: {e}")
+
+@app.route("/events/<date_str>")
+def events_for_day(date_str: str):
+    """Return cached events for a given YYYY‑MM‑DD."""
+    docs = (
+        db.collection("eventCache")
+          .document(date_str)
+          .collection("items")
+          .stream()
+    )
+    return {"events": [d.to_dict() for d in docs]}
