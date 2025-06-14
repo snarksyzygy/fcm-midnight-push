@@ -65,7 +65,14 @@ def fetch_and_store_week():
 
             date_str   = ev_date.isoformat()                # e.g. 2025‑06‑14
             event_time = dtparse.isoparse(ev["date"]).strftime("%H:%M")
-            key        = f"{date_str}_{event_time}_{ev['country']}_{ev['title'].replace(' ', '_')}"
+            # Sanitize the title so it is safe for a Firestore document ID
+            safe_title = (
+                ev["title"]
+                .replace(" ", "_")
+                .replace("/", "_")
+                .replace("\\", "_")
+            )
+            key = f"{date_str}_{event_time}_{ev['country']}_{safe_title}"
             doc_ref    = (
                 db.collection("eventCache")
                   .document(date_str)
