@@ -25,8 +25,8 @@ cred_info = json.loads(base64.b64decode(b64_key))
 cred = credentials.Certificate(cred_info)
 firebase_admin.initialize_app(cred)
 
-# Initialize Firestore client
-db = firestore.Client()
+# Initialize Firestore client using the same credentials
+db = firestore.Client(credentials=cred, project=cred_info["project_id"])
 
 # Scheduler for per-device midnight pushes
 scheduler = BackgroundScheduler()
