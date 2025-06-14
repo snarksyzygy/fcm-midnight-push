@@ -47,16 +47,37 @@ def fetch_and_store_today():
         weekly = resp.json()
 
         today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    # Write in chunks of ≤500 mutations (Firestore limit)
         batch = db.batch()
+        count = 0
+        written_today = 0
+
         for ev in weekly:
             if ev.get("date") != today:
                 continue
-            # build synthetic ID = date_time_currency_title
+
             key = f"{ev['date']}_{ev['time']}_{ev['currency']}_{ev['event'].replace(' ', '_')}"
-            doc_ref = db.collection("events").document(today).collection("items").document(key)
+            doc_ref = (
+                db.collection("events")
+                  .document(today)
+                  .collection("items")
+                  .document(key)
+            )
             batch.set(doc_ref, ev, merge=True)
-        batch.commit()
-        app.logger.info(f"📄 Stored today's events ({today}) to Firestore.")
+            count += 1
+            written_today += 1
+
+            # Commit every 500 queued writes
+            if count == 500:
+                batch.commit()
+                batch = db.batch()
+                count = 0
+
+        # commit any remainder
+        if count:
+            batch.commit()
+
+        app.logger.info(f"✅ Stored {written_today} events for {today} to Firestore.")
     except Exception as e:
         app.logger.error(f"❌ fetch_and_store_today failed: {e}")
 
