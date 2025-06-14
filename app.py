@@ -9,6 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 import requests, datetime
 from dateutil import parser as dtparse     # ISO‑8601 parser
 import logging, sys
+import time
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 from google.cloud import firestore
@@ -56,6 +57,10 @@ def fetch_and_store_week():
         parser = ijson.items(io.BytesIO(resp.content), "item")
         count_downloaded = 0
 
+        # Throttle Firestore writes to stay below per‑second quota
+        MAX_WRITES = 200      # commit every 200 mutations
+        SLEEP_SEC  = 0.4      # pause 400 ms between commits
+
         batch          = db.batch()
         writes_in_batch = 0
         written_total  = 0
@@ -93,15 +98,17 @@ def fetch_and_store_week():
             writes_in_batch += 1
             written_total   += 1
 
-            # Firestore limit: 500 writes per batch
-            if writes_in_batch == 500:
+            # Commit every MAX_WRITES writes
+            if writes_in_batch == MAX_WRITES:
                 batch.commit()
+                time.sleep(SLEEP_SEC)
                 batch             = db.batch()
                 writes_in_batch   = 0
 
         # commit any remainder
         if writes_in_batch:
             batch.commit()
+            time.sleep(SLEEP_SEC)
             app.logger.info(f"Committed final batch with {writes_in_batch} writes")
 
         app.logger.info(f"Downloaded {count_downloaded} events from ForexFactory")
