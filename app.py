@@ -22,11 +22,13 @@ if not b64_key:
 
 # Decode into a Python dict for firebase_admin
 cred_info = json.loads(base64.b64decode(b64_key))
+from google.oauth2 import service_account
+sa_creds = service_account.Credentials.from_service_account_info(cred_info)
 cred = credentials.Certificate(cred_info)
 firebase_admin.initialize_app(cred)
 
 # Initialize Firestore client using the same credentials
-db = firestore.Client(credentials=cred, project=cred_info["project_id"])
+db = firestore.Client(credentials=sa_creds, project=cred_info["project_id"])
 
 # Scheduler for per-device midnight pushes
 scheduler = BackgroundScheduler()
