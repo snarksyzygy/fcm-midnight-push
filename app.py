@@ -6,6 +6,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import requests, datetime
 from dateutil import parser as dtparse     # ISO‑8601 parser
+import logging, sys
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+
 from google.cloud import firestore
 
 app = Flask(__name__)
@@ -44,6 +47,7 @@ def fetch_and_store_today():
     URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
         weekly = requests.get(URL, timeout=10).json()
+        app.logger.info(f"Downloaded {len(weekly)} events from ForexFactory")
 
         today_date   = datetime.datetime.utcnow().date()      # e.g. 2025‑06‑14
         today_str    = today_date.isoformat()
@@ -55,7 +59,7 @@ def fetch_and_store_today():
         for ev in weekly:
             # ---------- keep only today ----------
             try:
-                ev_date = dtparse.isoparse(ev["date"]).date()
+                ev_date = dtparse.isoparse(ev["date"]).astimezone(datetime.timezone.utc).date()
             except Exception:
                 continue
             if ev_date != today_date:
@@ -85,6 +89,9 @@ def fetch_and_store_today():
         # commit any remainder
         if writes_in_batch:
             batch.commit()
+            app.logger.info(f"Committed final batch with {writes_in_batch} writes")
+        if written_total == 0:
+            app.logger.warning("No events matched today's date filter ‑ check timezone logic.")
 
         app.logger.info(f"✅ Stored {written_total} events for {today_str} to Firestore.")
     except Exception as e:
