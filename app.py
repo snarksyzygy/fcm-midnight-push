@@ -1,5 +1,4 @@
 import ijson
-import gzip
 import io
 from flask import Flask, request
 import firebase_admin
@@ -48,30 +47,13 @@ def fetch_and_store_week():
     """
     URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
-        resp = requests.get(URL, stream=True, timeout=10)
+        # Retrieve the feed; requests automatically decompresses gzip when
+        # stream=False (default), so we can parse the bytes directly.
+        resp = requests.get(URL, timeout=10)
         resp.raise_for_status()
 
-        # Some weeks FF sets Content‑Encoding: gzip, but occasionally it sends the
-        # header even when the body is plain JSON (and vice‑versa). Try gzip first;
-        # fall back to the raw stream on failure.
-        try:
-            if resp.headers.get("Content-Encoding", "").lower() == "gzip":
-                resp.raw.decode_content = True
-                stream_obj = gzip.GzipFile(fileobj=resp.raw)
-            else:
-                stream_obj = resp.raw
-            # Peek first byte to confirm gzip; read(1) then seek back
-            first_byte = stream_obj.peek(1) if hasattr(stream_obj, "peek") else stream_obj.read(1)
-            if first_byte.startswith(b"[{"):
-                # plain JSON; rewind if we consumed one byte
-                if hasattr(stream_obj, "seek"):
-                    stream_obj.seek(0)
-        except (OSError, AttributeError):
-            # Not actually gzipped
-            stream_obj = resp.raw
-
-        # Incremental JSON parser over the (maybe‑decompressed) stream
-        parser = ijson.items(stream_obj, "item")
+        # Feed the bytes into ijson using a BytesIO wrapper
+        parser = ijson.items(io.BytesIO(resp.content), "item")
         count_downloaded = 0
 
         batch          = db.batch()
