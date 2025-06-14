@@ -5,7 +5,8 @@ import firebase_admin
 from firebase_admin import credentials, messaging
 from firebase_admin.messaging import ApsAlert
 import os, json, time
-import openai
+from openai import OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import requests, datetime
@@ -40,7 +41,6 @@ firebase_admin.initialize_app(cred)
 db = firestore.Client(credentials=sa_creds, project=cred_info["project_id"])
 
 # ---------- ChatGPT description cache ----------
-openai.api_key = os.getenv("OPENAI_API_KEY")
 DESC_DOC = db.document("descriptions/cache")
 
 def load_bundled_descriptions() -> dict[str, str]:
@@ -87,7 +87,7 @@ def chatgpt_description(title: str, retries: int = 3) -> str:
               "so a macro trader understands.")
     for i in range(retries):
         try:
-            resp = openai.ChatCompletion.create(
+            resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
