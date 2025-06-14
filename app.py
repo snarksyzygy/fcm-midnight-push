@@ -26,7 +26,7 @@ cred = credentials.Certificate(cred_info)
 firebase_admin.initialize_app(cred)
 
 # Initialize Firestore client
-db = firestore.client()
+db = firestore.Client()
 
 # Scheduler for per-device midnight pushes
 scheduler = BackgroundScheduler()
