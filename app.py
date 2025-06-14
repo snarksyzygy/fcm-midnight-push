@@ -4,13 +4,13 @@ from flask import Flask, request
 import firebase_admin
 from firebase_admin import credentials, messaging
 from firebase_admin.messaging import ApsAlert
-import os, json
+import os, json, time
+import openai
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import requests, datetime
 from dateutil import parser as dtparse     # ISO‑8601 parser
 import logging, sys
-import time
 from datetime import timezone, timedelta
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
@@ -38,6 +38,39 @@ firebase_admin.initialize_app(cred)
 
 # Initialize Firestore client using the same credentials
 db = firestore.Client(credentials=sa_creds, project=cred_info["project_id"])
+
+# ---------- ChatGPT description cache ----------
+openai.api_key = os.getenv("OPENAI_API_KEY")
+DESC_DOC = db.document("descriptions/cache")
+
+def load_description_cache() -> dict[str, str]:
+    snap = DESC_DOC.get()
+    return snap.to_dict().get("entries", {}) if snap.exists else {}
+
+def save_description_batch(batch: dict[str, str]) -> None:
+    if batch:
+        DESC_DOC.set({"entries": batch}, merge=True)
+
+def chatgpt_description(title: str, retries: int = 3) -> str:
+    prompt = (f"Briefly (≤35 words) describe what “{title}” measures "
+              "so a macro trader understands.")
+    for i in range(retries):
+        try:
+            resp = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            backoff = 2 ** i
+            app.logger.warning(f"GPT retry {i+1}/{retries} failed: {e}; sleeping {backoff}s")
+            time.sleep(backoff)
+    return "Description not available."
+
+# Load cache once at start‑up
+description_cache = load_description_cache()
+# -----------------------------------------------
 
 # Scheduler for per-device midnight pushes
 scheduler = BackgroundScheduler()
@@ -69,6 +102,8 @@ def fetch_and_store_week():
         writes_in_batch = 0
         written_total  = 0
 
+        new_desc_batch = {}
+
         for ev in parser:
             count_downloaded += 1
             # ---------- keep all events ----------
@@ -96,9 +131,22 @@ def fetch_and_store_week():
             cleaned_ev["forecast"] = cleaned_ev.get("forecast") or "N/A"
             cleaned_ev["previous"] = cleaned_ev.get("previous") or "N/A"
             cleaned_ev["impact"]   = cleaned_ev.get("impact")   or "N/A"
-            cleaned_ev["detail"]   = cleaned_ev.get("detail")   or "Description not available."
-            cleaned_ev["time"]     = event_time  # already parsed above (HH:MM)
+
+            # Ensure detail exists – consult cache or GPT
+            title = cleaned_ev.get("title", "")
+            if title in description_cache:
+                cleaned_ev["detail"] = description_cache[title]
+            else:
+                desc = chatgpt_description(title)
+                cleaned_ev["detail"] = desc
+                description_cache[title] = desc
+                new_desc_batch[title] = desc
+
+            cleaned_ev["time"] = event_time
             day_events[date_str].append(cleaned_ev)
+
+        # Save any newly generated descriptions in one write
+        save_description_batch(new_desc_batch)
 
         # Persist each day's events as a single document with an "events" array
         batch = db.batch()
