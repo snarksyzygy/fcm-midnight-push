@@ -10,6 +10,7 @@ import requests, datetime
 from dateutil import parser as dtparse     # ISO‑8601 parser
 import logging, sys
 import time
+from datetime import timezone, timedelta
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 from google.cloud import firestore
@@ -135,8 +136,9 @@ def register():
         scheduler.remove_job(job_id=token)
     except Exception:
         pass
-    # Schedule at 00:00 in the user's timezone
-    trigger = CronTrigger(hour=0, minute=0, timezone=tz)
+    # tz is offset in minutes (e.g. -420). Convert to a tzinfo object for APScheduler.
+    offset_tz = timezone(timedelta(minutes=tz))
+    trigger = CronTrigger(hour=0, minute=0, timezone=offset_tz)
     scheduler.add_job(
         send_midnight_alert,
         trigger=trigger,
@@ -192,10 +194,8 @@ def send_midnight_alert(token: str):
 @app.route("/events/<date_str>")
 def events_for_day(date_str: str):
     """Return cached events for a given YYYY‑MM‑DD."""
-    docs = (
-        db.collection("eventCache")
-          .document(date_str)
-          .collection("items")
-          .stream()
-    )
-    return {"events": [d.to_dict() for d in docs]}
+    doc = db.collection("eventCache").document(date_str).get()
+    if doc.exists and "events" in doc.to_dict():
+        return {"events": doc.to_dict()["events"]}
+    else:
+        return {"events": []}
