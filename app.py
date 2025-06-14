@@ -50,12 +50,15 @@ def fetch_and_store_week():
         resp = requests.get(URL, stream=True, timeout=10)
         resp.raise_for_status()
 
-        # ForexFactory serves this endpoint as gzip; decompress on the fly
-        resp.raw.decode_content = True          # let urllib3 handle header
-        gz_stream = gzip.GzipFile(fileobj=resp.raw)
+        # Some weeks the feed is plain JSON, other weeks it is sent as gzip.
+        if resp.headers.get("Content-Encoding", "").lower() == "gzip":
+            resp.raw.decode_content = True  # urllib3 handles the decompress
+            stream_obj = gzip.GzipFile(fileobj=resp.raw)
+        else:
+            stream_obj = resp.raw
 
-        # Incremental JSON parser over the decompressed stream
-        parser = ijson.items(gz_stream, 'item')
+        # Incremental JSON parser over the (maybe‑decompressed) stream
+        parser = ijson.items(stream_obj, "item")
         count_downloaded = 0
 
         batch          = db.batch()
