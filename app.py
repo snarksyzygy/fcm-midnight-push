@@ -91,7 +91,14 @@ def fetch_and_store_week():
                 .replace("\\", "_")
             )
             # Accumulate events per Firestore document (one doc per day)
-            day_events[date_str].append(ev)
+            # --- normalize fields so the app sees consistent data ---
+            cleaned_ev = ev.copy()
+            cleaned_ev["forecast"] = cleaned_ev.get("forecast") or "N/A"
+            cleaned_ev["previous"] = cleaned_ev.get("previous") or "N/A"
+            cleaned_ev["impact"]   = cleaned_ev.get("impact")   or "N/A"
+            cleaned_ev["detail"]   = cleaned_ev.get("detail")   or "Description not available."
+            cleaned_ev["time"]     = event_time  # already parsed above (HH:MM)
+            day_events[date_str].append(cleaned_ev)
 
         # Persist each day's events as a single document with an "events" array
         batch = db.batch()
