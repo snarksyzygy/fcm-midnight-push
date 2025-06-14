@@ -1,4 +1,5 @@
 import ijson
+import gzip
 from flask import Flask, request
 import firebase_admin
 from firebase_admin import credentials, messaging
@@ -47,7 +48,14 @@ def fetch_and_store_week():
     URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
         resp = requests.get(URL, stream=True, timeout=10)
-        parser = ijson.items(resp.raw, 'item')
+        resp.raise_for_status()
+
+        # ForexFactory serves this endpoint as gzip; decompress on the fly
+        resp.raw.decode_content = True          # let urllib3 handle header
+        gz_stream = gzip.GzipFile(fileobj=resp.raw)
+
+        # Incremental JSON parser over the decompressed stream
+        parser = ijson.items(gz_stream, 'item')
         count_downloaded = 0
 
         batch          = db.batch()
