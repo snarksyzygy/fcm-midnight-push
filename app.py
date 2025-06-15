@@ -13,6 +13,7 @@ import requests, datetime
 from dateutil import parser as dtparse     # ISO‑8601 parser
 import logging, sys
 from datetime import timezone, timedelta
+import datetime
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 from google.cloud import firestore
@@ -219,8 +220,21 @@ def health_check():
 # Manual endpoint to trigger weekly fetch
 @app.route("/fetch-week-now")
 def manual_fetch_week():
-    fetch_and_store_week()
-    return {"fetched": True}
+    """
+    Trigger a one-off weekly fetch asynchronously and return immediately.
+    """
+    try:
+        # schedule this job to run immediately, without blocking the request
+        scheduler.add_job(
+            fetch_and_store_week,
+            id="manual_fetch",
+            next_run_time=datetime.datetime.utcnow(),
+            replace_existing=True
+        )
+        return {"scheduled": True}
+    except Exception as e:
+        app.logger.error(f"Failed to schedule manual fetch: {e}")
+        return {"scheduled": False, "error": str(e)}, 500
 
 @app.route("/register", methods=["POST"])
 def register():
