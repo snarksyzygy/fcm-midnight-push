@@ -179,13 +179,26 @@ def fetch_and_store_week():
         # Save any newly generated descriptions in one write
         save_description_batch(new_desc_batch)
 
-        # Persist each day's events as a single document with an "events" array
+        # Persist each day's events with batching every MAX_WRITES docs
         batch = db.batch()
+        writes_in_batch = 0
+        written_total = 0
+
         for date_key, ev_list in day_events.items():
             doc_ref = db.collection("eventCache").document(date_key)
             batch.set(doc_ref, {"events": ev_list}, merge=True)
-        batch.commit()
-        written_total = sum(len(v) for v in day_events.values())
+            writes_in_batch += 1
+            written_total += len(ev_list)
+
+            if writes_in_batch >= MAX_WRITES:
+                batch.commit()
+                time.sleep(SLEEP_SEC)      # stay under quota
+                batch = db.batch()
+                writes_in_batch = 0
+
+        # Commit any remainder
+        if writes_in_batch:
+            batch.commit()
 
         app.logger.info(f"Downloaded {count_downloaded} events from ForexFactory")
         app.logger.info(f"✅ Upserted {written_total} events across the week.")
