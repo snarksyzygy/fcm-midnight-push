@@ -20,6 +20,9 @@ from google.cloud import firestore
 
 app = Flask(__name__)
 
+# In-memory store of each device's registration filters
+registrations: dict[str, dict] = {}
+
 # ------------------------------------------------------------
 # Load service‑account key.
 # Expect a one‑line base‑64 string in SA_B64 (preferred) or
@@ -241,6 +244,9 @@ def register():
     data = request.get_json(force=True)
     token = data.get("token")
     tz = data.get("tz")
+    impacts    = data.get("impacts", [])
+    currencies = data.get("currencies", [])
+    registrations[token] = {"tz": tz, "impacts": impacts, "currencies": currencies}
     if not token:
         return {"registered": False, "error": "Missing token"}, 400
     print(f"🔖 Registered device token: {token}, tz: {tz}")
@@ -287,24 +293,50 @@ def send_midnight_alert(token: str):
     Sends a remote push to the given FCM token with an alert-type payload
     at the device's local midnight.
     """
-    try:
-        message = messaging.Message(
-            notification=messaging.Notification(
-                title="Fetching Events…",
-                body="Fetching today’s news events…"
-            ),
-            data={"action": "fetchNews"},
-            token=token,
-            apns=messaging.APNSConfig(
-                headers={"apns-priority": "10"},  # high priority alert
-                payload=messaging.APNSPayload(
-                    aps=messaging.Aps(
-                        alert=ApsAlert(title="New Day!", body="Fetching today’s news events…"),
-                        sound="default"
-                    )
+    # Look up this device's filters
+    regs = registrations.get(token, {})
+    tz_offset     = regs.get("tz", 0)
+    impacts       = regs.get("impacts", [])
+    currencies    = regs.get("currencies", [])
+    # Determine today's date in the device's timezone
+    user_tz = timezone(timedelta(minutes=tz_offset))
+    today = datetime.datetime.now(user_tz).date().isoformat()
+    # Fetch today's events from Firestore
+    snap = db.collection("eventCache").document(today).get()
+    all_events = snap.to_dict().get("events", []) if snap.exists else []
+    # Apply filters
+    def keep(ev):
+        ok_imp = not impacts or ev.get("impact") in impacts
+        ok_cur = not currencies or ev.get("country") in currencies
+        return ok_imp and ok_cur
+    filtered = [ev for ev in all_events if keep(ev)]
+    # Build summary based on filtered list
+    count = len(filtered)
+    if count == 0:
+        title = "Economic Events Today"
+        body  = "There are no major news events today."
+    else:
+        first = filtered[0]["time"]
+        last  = filtered[-1]["time"]
+        title = f"There are {count} news events today"
+        body  = f"From {first} to {last} based on your filters."
+
+    message = messaging.Message(
+        notification=messaging.Notification(title=title, body=body),
+        data={"action": "fetchNews"},
+        token=token,
+        apns=messaging.APNSConfig(
+            headers={"apns-priority": "10"},
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    alert=ApsAlert(title=title, body=body),
+                    sound="default",
+                    mutable_content=True
                 )
             )
         )
+    )
+    try:
         messaging.send(message)
         app.logger.info(f"🔔 Midnight alert sent to {token}")
     except Exception as e:
