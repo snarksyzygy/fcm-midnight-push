@@ -14,6 +14,7 @@ from dateutil import parser as dtparse     # ISO‑8601 parser
 import logging, sys
 from datetime import timezone, timedelta
 import datetime
+import re
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 from google.cloud import firestore
@@ -118,7 +119,19 @@ def fetch_and_store_week():
     """
     from collections import defaultdict
     day_events: dict[str, list] = defaultdict(list)
-    URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    # Dynamically fetch the correct versioned JSON URL from ForexFactory calendar page
+    try:
+        page = requests.get("https://www.forexfactory.com/calendar", timeout=10)
+        # Look for the ff_calendar_thisweek.json?version=... link in the HTML
+        m = re.search(r'ff_calendar_thisweek\\.json\\?version=([A-Za-z0-9]+)', page.text)
+        if m:
+            version = m.group(1)
+            URL = f"https://nfs.faireconomy.media/ff_calendar_thisweek.json?version={version}"
+        else:
+            URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    except Exception:
+        # Fallback to unversioned URL on any error
+        URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
         # Retrieve the feed; requests automatically decompresses gzip when
         # stream=False (default), so we can parse the bytes directly.
