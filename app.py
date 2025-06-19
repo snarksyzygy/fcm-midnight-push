@@ -363,3 +363,12 @@ def events_for_day(date_str: str):
         return {"events": doc.to_dict()["events"]}
     else:
         return {"events": []}
+
+@app.route("/test-midnight-alert", methods=["POST"])
+def test_midnight_alert():
+    data = request.get_json(force=True)
+    token = data.get("token")
+    if not token:
+        return {"success": False, "error": "Missing token"}, 400
+    send_midnight_alert(token)
+    return {"success": True}
